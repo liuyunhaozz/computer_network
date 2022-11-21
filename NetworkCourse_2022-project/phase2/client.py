@@ -5,6 +5,23 @@
 import socket
 import tkinter
 import threading
+import time
+
+
+class Mythread(threading.Thread):
+    """子线程，用于从服务器中读取数据并在图形界面进行显示"""
+    def __init__(self, func):
+        threading.Thread.__init__(self, daemon=True)
+        self.running = True
+        self.func = func
+
+    def stop(self):
+        self.running = False
+    
+    def run(self):
+        while self.running:
+            self.func()
+
 
 
 class ChatClient:
@@ -42,7 +59,11 @@ class ChatClient:
         while True:
             try:
                 msg = conn.recv(1024).decode('utf8')
-                self.text_message.insert(tkinter.END, msg)
+                if msg == 'shutdown':
+                    self.thread.stop()
+                    self.root.destroy()
+                else:
+                    self.text_message.insert(tkinter.END, msg)
             except:
                 break
 
@@ -67,12 +88,18 @@ class ChatClient:
     def run(self):
         """启动两个线程，一个线程进行调用button发送数据给服务器操作，一个线程进行从服务器中读取数据并显示的操作"""
         self.s.connect((self.host, self.port))
+        name, port = self.s.getsockname()
+        self.root.title(f'聊天室--用户{name}/{port}')
         self.setWindow()
-        thread = threading.Thread(target=lambda :self.get_msg(self.s))
-        thread.start()
+        self.thread = Mythread(lambda :self.get_msg(self.s))
+        self.thread.start()
         self.root.mainloop()
+
         
+
 
 # 连接一台我的腾讯云服务器，输入公网IP地址和端口号
 client = ChatClient('110.42.156.205', 8888)
 client.run()
+
+    

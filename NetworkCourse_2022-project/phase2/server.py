@@ -48,35 +48,82 @@ class TCPChatServer:
         # 启动事件循环
         self._loop.run_forever()
     
+    def get_socket(self, name):
+        """在当前连接的客户端中查找给定的name，并返回对应的socket"""
+        for client in self.clients:
+            if client['name'] == name:
+                return client['socket']
+        return None
+        
+    def get_loginmessage(self, client):
+        """当一个用户登陆后，给所有用户发送必要的信息"""
+        msg1 = f'用户{client["name"]}已上线\n'.encode('utf8')
+        msg2 = f'当前在线人数为 {len(self.clients)}\n'.encode('utf8')
+        msg3 = f'当前在线人员为\n'
+        for client in self.clients:
+            msg3 += f"| {client['name']} |\n" 
+        msg3 = msg3.encode('utf8')        
+        return msg1 + msg2 + msg3
+
     def _accept(self, sock):
         """回调函数，针对每个连接的客户端生成一个socket，并将其加入clients中便于广播消息"""
         conn, addr = sock.accept()
         # print(addr)
-        self.clients.append(conn)
+        client_addr, client_port = conn.getpeername()
+        client = {}
+        client['socket'] = conn
+        client['name'] = f'{client_addr}/{client_port}'
+        self.clients.append(client)
         print('accepted', conn, 'from', addr)
         conn.setblocking(False)
-        self._loop.selector.register(conn, selectors.EVENT_READ, self._on_read)
+        msg = self.get_loginmessage(client)
+        # print(self.clients)
+        for client in self.clients:
+            each_conn = client['socket']
+            try:
+                self._loop.selector.register(each_conn, selectors.EVENT_WRITE, (self._on_write, msg)) 
+            except KeyError:
+                self._loop.selector.modify(each_conn, selectors.EVENT_WRITE, (self._on_write, msg))
     
     def _on_read(self, conn):
         """回调函数，读取客户端发送的数据"""
         client_addr, client_port = conn.getpeername()
         msg = conn.recv(1024)
-        if msg:
-            # print('echoing', repr(msg), 'to', conn)
+        # print(msg)
+        if msg != 'exit\n'.encode('utf8'):
+            atmsg = msg.decode('utf8').split(' ')
             # 为客户端发来的信息加上客户端的IP和端口号，便于分辨不同用户
             msg = f'{client_addr}/{client_port}: '.encode('utf8') + msg
-            print(msg.decode('utf8'))
-            # 收到信息后，将每个客户端的事件修改为写事件，即把一个消息对所有客户端广播
-            for each_conn in self.clients:
-                self._loop.selector.modify(each_conn, selectors.EVENT_WRITE, (self._on_write, msg))
+            
+            # 消息有@时，进行两个人之间的消息发送
+            if len(atmsg) > 1 and atmsg[0][0] == '@':
+                print(msg.decode('utf8'))
+                atname = atmsg[0][1:]
+                atconn = self.get_socket(atname)
+                if atconn:
+                    self._loop.selector.modify(conn, selectors.EVENT_WRITE, (self._on_write, msg))
+                    self._loop.selector.modify(atconn, selectors.EVENT_WRITE, (self._on_write, msg))
+                else:
+                    msg = '发送失败，找不到该用户'.encode('utf8')
+                    self._loop.selector.modify(conn, selectors.EVENT_WRITE, (self._on_write, msg))
+            
+            # 消息没有@时，对所有用户发送
+            else:
+                # print('echoing', repr(msg), 'to', conn)
+                print(msg.decode('utf8'))
+                # 收到信息后，将每个客户端的事件修改为写事件，即把一个消息对所有客户端广播
+                for client in self.clients:
+                    each_conn = client['socket']
+                    self._loop.selector.modify(each_conn, selectors.EVENT_WRITE, (self._on_write, msg))
         else:
             print('closing', conn)
+            conn.sendall('shutdown'.encode('utf8'))
             self._loop.selector.unregister(conn)
             conn.close()
 
     def _on_write(self, conn, msg):
         """回调函数，向客户端发送数据"""
-        conn.sendall(msg)
+        conn.sendall(msg) # 该函数为阻塞式
         self._loop.selector.modify(conn, selectors.EVENT_READ, self._on_read)
 
 
