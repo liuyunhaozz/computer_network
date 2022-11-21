@@ -1,3 +1,7 @@
+"""
+服务器端，采用单线程阻塞式IO
+"""
+
 from socket import  *
 #创建套接字
 tcp_server = socket(AF_INET,SOCK_STREAM)
